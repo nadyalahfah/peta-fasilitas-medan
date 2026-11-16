@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peta Fasilitas Publik Kota Medan</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{--ink:#14262e;--mute:#5a6b73;--bar:#0f3d4a;--bg:#f4f7f8;--line:#d6e0e4;--accent:#f2b134}
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{font-family:"Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg);display:grid;grid-template-columns:360px 1fr;height:100vh}
+  aside{display:flex;flex-direction:column;min-height:0;background:#fff;border-right:1px solid var(--line);z-index:2}
+  .head{background:var(--bar);color:#fff;padding:16px 18px}
+  .head h1{font-size:1.15rem;line-height:1.25}
+  .head p{font-size:.78rem;opacity:.8;margin-top:4px}
+  .box{padding:12px 16px;border-bottom:1px solid var(--line)}
+  input[type=search]{width:100%;font:inherit;font-size:.9rem;padding:9px 12px;border:1px solid var(--line);border-radius:8px}
+  input:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font:inherit;font-size:.78rem;font-weight:600;padding:5px 10px;border-radius:999px;border:1.5px solid var(--c);background:#fff;color:var(--c);cursor:pointer}
+  .chip[aria-pressed="true"]{background:var(--c);color:#fff}
+  .tools{display:flex;gap:6px;flex-wrap:wrap}
+  .btn{font:inherit;font-size:.8rem;font-weight:600;padding:7px 11px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  .btn:hover{background:var(--bg)}
+  .btn[aria-pressed="true"]{background:var(--bar);color:#fff;border-color:var(--bar)}
+  #status{font-size:.8rem;color:var(--mute);padding:8px 16px;border-bottom:1px solid var(--line)}
+  #list{flex:1;overflow:auto;list-style:none;padding:0}
+  #list li{display:flex;gap:10px;align-items:flex-start;padding:9px 16px;border-bottom:1px solid #eef2f4;cursor:pointer}
+  #list li:hover,#list li:focus-visible{background:var(--bg)}
+  #list .dot{flex:none;width:11px;height:11px;border-radius:50%;margin-top:5px}
+  #list b{display:block;font-size:.86rem}
+  #list small{color:var(--mute);font-size:.75rem}
+  #map{height:100%;min-height:0}
+  .legend{background:#fff;padding:8px 10px;border-radius:8px;box-shadow:0 1px 6px #0004;font-size:.76rem;line-height:1.7}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:7px;border:2px solid #fff;box-shadow:0 0 0 1px #0006;vertical-align:-1px}
+  .leaflet-popup-content h4{font-size:.95rem;margin-bottom:2px}
+  .leaflet-popup-content small{color:var(--mute)}
+  @media(max-width:760px){
+    body{grid-template-columns:1fr;grid-template-rows:55vh 1fr}
+    #map{order:-1}
+    aside{border-right:0;border-top:1px solid var(--line)}
+    .head{padding:10px 14px}
+  }
+</style>
+</head>
+<body>
+<aside>
+  <div class="head">
+    <h1>Peta Fasilitas Publik Kota Medan</h1>
+    <p>Kesehatan, pendidikan, transportasi, ruang publik, dan wisata. Mendukung SDG 11 dan SDG 9.</p>
+  </div>
+  <div class="box"><input id="q" type="search" placeholder="Cari nama fasilitas..." aria-label="Cari nama fasilitas"></div>
+  <div class="box"><div class="chips" id="chips" role="group" aria-label="Filter kategori"></div></div>
+  <div class="box tools">
+    <button class="btn" id="btnLocate">Lokasi saya</button>
+    <button class="btn" id="btnMeasure" aria-pressed="false">Ukur jarak</button>
+    <button class="btn" id="btnClear">Bersihkan</button>
+    <button class="btn" id="btnImport">Impor GeoJSON</button>
+    <input type="file" id="fileIn" accept=".geojson,.json" hidden>
+  </div>
+  <div id="status" role="status">Memuat data...</div>
+  <ul id="list"></ul>
+</aside>
+<div id="map" aria-label="Peta interaktif fasilitas publik Kota Medan"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const warna = {'Kesehatan':'#d64545','Pendidikan':'#2f6fd6','Transportasi':'#7b4bc2','Ruang publik':'#1f9d62','Wisata & budaya':'#e08a12'};
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = m => m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+
+// Data cadangan (koordinat perkiraan) bila data OpenStreetMap gagal dimuat
+const cadangan = [
+  ['RSUP H. Adam Malik','Kesehatan','Rumah sakit',3.5113,98.6112],['RSUD Dr. Pirngadi','Kesehatan','Rumah sakit',3.5806,98.6924],
+  ['Universitas Sumatera Utara','Pendidikan','Universitas',3.5602,98.6561],['UIN Sumatera Utara','Pendidikan','Universitas',3.5960,98.6740],
+  ['Universitas Negeri Medan','Pendidikan','Universitas',3.6214,98.7144],['Bandara Kualanamu','Transportasi','Bandara',3.6422,98.8853],
+  ['Stasiun Kereta Api Medan','Transportasi','Stasiun',3.5946,98.6856],['Terminal Amplas','Transportasi','Terminal bus',3.5413,98.7100],
+  ['Lapangan Merdeka','Ruang publik','Lapangan',3.5914,98.6731],['Istana Maimun','Wisata & budaya','Cagar budaya',3.5750,98.6839],
+  ['Masjid Raya Al-Mashun','Wisata & budaya','Masjid bersejarah',3.5751,98.6877]
+].map((r,i) => ({id:'c'+i, nama:r[0], kat:r[1], jenis:r[2], lat:r[3], lng:r[4], tags:{}}));
+
+// Peta dan 7 basemap
+const map = L.map('map', {center:[3.5952, 98.6722], zoom:12, preferCanvas:true});
+const esri = p => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' + p + '/MapServer/tile/{z}/{y}/{x}', {maxZoom:19, attribution:'Tiles &copy; Esri'});
+const base = {
+  'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}),
+  'Esri Jalan': esri('World_Street_Map'),
+  'Esri Satelit': esri('World_Imagery'),
+  'Esri Topografi': esri('World_Topo_Map'),
+  'Esri Abu-abu Terang': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {maxZoom:16, attribution:'Tiles &copy; Esri'}),
+  'Esri National Geographic': esri('NatGeo_World_Map'),
+  'OpenTopoMap': L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {maxZoom:17, attribution:'&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap (CC-BY-SA)'})
+};
+// Esri Jalan sebagai bawaan karena tidak memblokir akses dari berkas lokal; OSM tersedia sebagai pilihan
+base['Esri Jalan'].addTo(map);
+
+const grup = {};
+Object.keys(warna).forEach(k => grup[k] = L.layerGroup().addTo(map));
+const overlays = {};
+const ctl = L.control.layers(base, {}, {collapsed:true, position:'topright'}).addTo(map);
+Object.keys(warna).forEach(k => ctl.addOverlay(grup[k], k));
+L.control.scale({imperial:false}).addTo(map);
+
+const legend = L.control({position:'bottomleft'});
+legend.onAdd = () => {
+  const d = L.DomUtil.create('div', 'legend');
+  d.innerHTML = '<b>Legenda</b><br>' + Object.keys(warna).map(k => '<i style="background:' + warna[k] + '"></i>' + k).join('<br>');
+  return d;
+};
+legend.addTo(map);
+
+// Data, marker, filter
+let data = [], markers = {};
+const $ = id => document.getElementById(id);
+
+function popup(f) {
+  const t = f.tags || {};
+  let h = '<h4>' + esc(f.nama) + '</h4><small>' + esc(f.kat) + ' &middot; ' + esc(f.jenis) + '</small>';
+  const alamat = [t['addr:street'], t['addr:housenumber']].filter(Boolean).join(' ');
+  if (alamat) h += '<br>' + esc(alamat);
+  if (t.opening_hours) h += '<br>Jam: ' + esc(t.opening_hours);
+  if (t.phone) h += '<br>Telp: ' + esc(t.phone);
+  if (/^https?:\/\//.test(t.website || '')) h += '<br><a href="' + esc(t.website) + '" target="_blank" rel="noopener">Situs web</a>';
+  return h + '<br><small>' + f.lat.toFixed(5) + ', ' + f.lng.toFixed(5) + '</small>';
+}
+
+function render() {
+  const q = $('q').value.trim().toLowerCase();
+  Object.values(grup).forEach(g => g.clearLayers());
+  markers = {};
+  const tampil = data.filter(f => !q || f.nama.toLowerCase().includes(q));
+  tampil.forEach(f => {
+    const m = L.circleMarker([f.lat, f.lng], {radius:7, color:'#fff', weight:1.5, fillColor:warna[f.kat], fillOpacity:.95})
+      .bindPopup(() => popup(f)).bindTooltip(f.nama);
+    m.addTo(grup[f.kat]);
+    markers[f.id] = m;
+  });
+  const aktif = tampil.filter(f => map.hasLayer(grup[f.kat]));
+  $('list').innerHTML = aktif.slice(0, 80).map(f =>
+    '<li tabindex="0" data-id="' + f.id + '"><span class="dot" style="background:' + warna[f.kat] + '"></span><div><b>' + esc(f.nama) +
+    '</b><small>' + esc(f.kat) + ' &middot; ' + esc(f.jenis) + '</small></div></li>').join('') +
+    (aktif.length > 80 ? '<li style="cursor:default"><small>dan ' + (aktif.length - 80) + ' fasilitas lainnya. Gunakan pencarian untuk mempersempit.</small></li>' : '');
+  chips();
+}
+
+function chips() {
+  $('chips').innerHTML = Object.keys(warna).map(k => {
+    const n = data.filter(f => f.kat === k && (!$('q').value || f.nama.toLowerCase().includes($('q').value.trim().toLowerCase()))).length;
+    return '<button class="chip" style="--c:' + warna[k] + '" aria-pressed="' + map.hasLayer(grup[k]) + '" data-k="' + k + '">' + k + ' (' + n + ')</button>';
+  }).join('');
+}
+$('chips').addEventListener('click', e => {
+  const k = e.target.dataset.k;
+  if (!k) return;
+  map.hasLayer(grup[k]) ? map.removeLayer(grup[k]) : map.addLayer(grup[k]);
+});
+map.on('overlayadd overlayremove', render);
+$('q').addEventListener('input', render);
+function buka(id) {
+  const m = markers[id]; if (!m) return;
+  map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 16), {duration:.8});
+  setTimeout(() => m.openPopup(), 850);
+}
+$('list').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) buka(li.dataset.id); });
+$('list').addEventListener('keydown', e => { if (e.key === 'Enter') { const li = e.target.closest('li[data-id]'); if (li) buka(li.dataset.id); } });
+
+// Ambil data dari OpenStreetMap lewat Overpass API
+function klasifikasi(t) {
+  if (t.amenity === 'hospital') return ['Kesehatan', 'Rumah sakit'];
+  if (t.amenity === 'clinic') return ['Kesehatan', 'Klinik / Puskesmas'];
+  if (t.amenity === 'university') return ['Pendidikan', 'Universitas'];
+  if (t.amenity === 'college') return ['Pendidikan', 'Perguruan tinggi'];
+  if (t.amenity === 'school') return ['Pendidikan', 'Sekolah'];
+  if (t.railway === 'station') return ['Transportasi', 'Stasiun'];
+  if (t.amenity === 'bus_station') return ['Transportasi', 'Terminal bus'];
+  if (t.leisure === 'park') return ['Ruang publik', 'Taman'];
+  if (t.place === 'square') return ['Ruang publik', 'Lapangan / alun-alun'];
+  if (t.tourism) return ['Wisata & budaya', {attraction:'Objek wisata', museum:'Museum', zoo:'Kebun binatang'}[t.tourism] || 'Wisata'];
+  return null;
+}
+function dariGeoJSON(j) {
+  const seen = new Set(), out = [];
+  (j.features || []).forEach((f, i) => {
+    const t = f.properties || {}, k = klasifikasi(t);
+    if (!k || !t.name || !f.geometry) return;
+    let lat, lng;
+    if (f.geometry.type === 'Point') { lng = f.geometry.coordinates[0]; lat = f.geometry.coordinates[1]; }
+    else { const c = L.geoJSON(f).getBounds().getCenter(); lat = c.lat; lng = c.lng; }
+    const id = String(t['@id'] || t.id || 'g' + i);
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({id:id.replace(/[^\w]/g, ''), nama:t.name, kat:k[0], jenis:k[1], lat, lng, tags:t});
+  });
+  return out;
+}
+async function muatData() {
+  try {
+    const r = await fetch('data.geojson');
+    if (!r.ok) throw new Error(r.status);
+    const out = dariGeoJSON(await r.json());
+    if (!out.length) throw new Error('kosong');
+    data = out; render();
+    $('status').textContent = data.length + ' fasilitas dari berkas data.geojson (OpenStreetMap via Overpass Turbo).';
+  } catch (e) { muatOSM(); }
+}
+$('btnImport').addEventListener('click', () => $('fileIn').click());
+$('fileIn').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const out = dariGeoJSON(JSON.parse(await f.text()));
+    if (!out.length) throw new Error('kosong');
+    data = out; render();
+    $('status').textContent = data.length + ' fasilitas dari berkas ' + f.name + '.';
+  } catch (err) { $('status').textContent = 'Berkas tidak dapat dibaca atau tidak berisi fasilitas yang dikenali.'; }
+});
+
+async function muatOSM() {
+  const bb = '3.45,98.55,3.70,98.78';
+  const q = '[out:json][timeout:40];(' +
+    'nwr["amenity"~"^(hospital|clinic|university|college|school|bus_station)$"]["name"](' + bb + ');' +
+    'nwr["railway"="station"]["name"](' + bb + ');nwr["leisure"="park"]["name"](' + bb + ');' +
+    'nwr["place"="square"]["name"](' + bb + ');nwr["tourism"~"^(attraction|museum|zoo)$"]["name"](' + bb + '););out center tags;';
+  const servers = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  $('status').textContent = 'Memuat data dari OpenStreetMap...';
+  for (const s of servers) {
+    try {
+      const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 45000);
+      const r = await fetch(s + '?data=' + encodeURIComponent(q), {signal:ctrl.signal}); clearTimeout(to);
+      if (!r.ok) throw new Error(r.status);
+      const j = await r.json(), seen = new Set(), out = [];
+      j.elements.forEach(el => {
+        const t = el.tags || {}, k = klasifikasi(t), lat = el.lat ?? (el.center && el.center.lat), lng = el.lon ?? (el.center && el.center.lon);
+        if (!k || lat == null || !t.name || seen.has(el.type + el.id)) return;
+        seen.add(el.type + el.id);
+        out.push({id:el.type[0] + el.id, nama:t.name, kat:k[0], jenis:k[1], lat, lng, tags:t});
+      });
+      if (!out.length) throw new Error('kosong');
+      data = out; render();
+      $('status').textContent = data.length + ' fasilitas dari OpenStreetMap (Overpass API).';
+      return;
+    } catch (e) { /* coba server berikutnya */ }
+  }
+  data = cadangan; render();
+  $('status').textContent = 'Data OpenStreetMap gagal dimuat. Menampilkan ' + data.length + ' data contoh (offline).';
+}
+
+// Lokasi saya dan alat ukur jarak
+const userLayer = L.layerGroup().addTo(map);
+$('btnLocate').addEventListener('click', () => { $('status').textContent = 'Mencari lokasi Anda...'; map.locate({setView:true, maxZoom:15, timeout:8000}); });
+map.on('locationfound', e => {
+  userLayer.clearLayers();
+  let best = null, bd = Infinity;
+  data.forEach(f => { const d = e.latlng.distanceTo([f.lat, f.lng]); if (d < bd) { bd = d; best = f; } });
+  L.circle(e.latlng, {radius:e.accuracy, color:'#0f3d4a', weight:1, fillOpacity:.1}).addTo(userLayer);
+  L.circleMarker(e.latlng, {radius:7, color:'#fff', weight:2, fillColor:'#0f3d4a', fillOpacity:1}).addTo(userLayer).bindPopup('Lokasi Anda');
+  if (best) {
+    L.polyline([e.latlng, [best.lat, best.lng]], {color:'#f2b134', weight:3, dashArray:'6 6'}).addTo(userLayer);
+    $('status').textContent = 'Fasilitas terdekat: ' + best.nama + ' (' + best.jenis + '), ' + fmt(bd) + ' garis lurus.';
+  }
+});
+map.on('locationerror', () => { $('status').textContent = 'Lokasi tidak dapat diakses. Izinkan akses lokasi di browser lalu coba lagi.'; });
+
+let ukur = false, pts = [], garis = null;
+$('btnMeasure').addEventListener('click', () => {
+  ukur = !ukur; $('btnMeasure').setAttribute('aria-pressed', ukur);
+  $('status').textContent = ukur ? 'Klik beberapa titik pada peta untuk mengukur jarak.' : 'Mode ukur dimatikan.';
+});
+map.on('click', e => {
+  if (!ukur) return;
+  pts.push(e.latlng);
+  if (!garis) garis = L.polyline([], {color:'#f2b134', weight:4, dashArray:'8 6'}).addTo(userLayer);
+  garis.setLatLngs(pts);
+  L.circleMarker(e.latlng, {radius:4, color:'#f2b134', fillOpacity:1}).addTo(userLayer);
+  let tot = 0; for (let i = 1; i < pts.length; i++) tot += pts[i - 1].distanceTo(pts[i]);
+  $('status').textContent = 'Jarak total: ' + fmt(tot) + ' (' + pts.length + ' titik)';
+});
+$('btnClear').addEventListener('click', () => { userLayer.clearLayers(); pts = []; garis = null; $('status').textContent = data.length + ' fasilitas ditampilkan.'; });
+
+muatData();
+</script>
+</body>
+</html>
